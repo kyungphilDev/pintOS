@@ -168,8 +168,8 @@ start_process(void *file_name_)
   sema_up(&thread_current()->parent_thread->load_lock);
   if (!success)
   {
-    thread_exit();
-    // sys_exit(-1);
+    // thread_exit();
+    sys_exit(-1);
   }
 
   /* Start the user process by simulating a return from an

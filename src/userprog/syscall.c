@@ -58,7 +58,7 @@ syscall_handler(struct intr_frame *f)
   {
     read_arg(esp, argv, 3);
     // is_userArea((void *)argv[1]);
-    f->eax = sys_write(argv[0], (void *)argv[1], (unsigned)argv[2]);
+    f->eax = write(argv[0], (void *)argv[1], (unsigned)argv[2]);
     break;
   }
   case SYS_CREATE: //check
@@ -97,29 +97,29 @@ syscall_handler(struct intr_frame *f)
     // is_userArea((void *)argv[0]);
     char *file = (char *)argv[0];
     // f->eax = open(file);
-    int ret = -1;
-    if (file == NULL)
-    {
-      // printf("sys_open\n");
-      sys_exit(-1);
-    }
-    lock_acquire(&file_lock);
-    struct file *file_ptr = filesys_open(file);
-    if (file_ptr)
-    {
-      // ret = add_to_fd(f, filename);
-      for (int p = 3; p < 128; p++)
-      {
-        if (thread_current()->file_descriptor[p] == NULL)
-        {
-          thread_current()->file_descriptor[p] = file_ptr;
-          ret = p;
-          break;
-        }
-      }
-    }
-    lock_release(&file_lock);
-    f->eax = ret;
+    // int ret = -1;
+    // if (file == NULL)
+    // {
+    //   // printf("sys_open\n");
+    //   sys_exit(-1);
+    // }
+    // lock_acquire(&file_lock);
+    // struct file *file_ptr = filesys_open(file);
+    // if (file_ptr)
+    // {
+    //   // ret = add_to_fd(f, filename);
+    //   for (int p = 3; p < 128; p++)
+    //   {
+    //     if (thread_current()->file_descriptor[p] == NULL)
+    //     {
+    //       thread_current()->file_descriptor[p] = file_ptr;
+    //       ret = p;
+    //       break;
+    //     }
+    //   }
+    // }
+    // lock_release(&file_lock);
+    f->eax = open(file);
     break;
   }
   case SYS_FILESIZE: //check
@@ -292,28 +292,30 @@ void sys_exit(int exit_status)
 }
 
 // todo -------------------아래 다
-int sys_write(int fd, const void *buffer, unsigned fd_size)
-{
-  if (fd == 1)
-  {
-    putbuf(buffer, fd_size);
-    return fd_size;
-  }
-  else if (fd > 2)
-  {
-    struct file *file_descriptor_ptr = thread_current()->file_descriptor[fd];
-    if (file_descriptor_ptr == NULL)
-    {
-      sys_exit(-1);
-    }
-    if (file_descriptor_ptr->deny_write)
-    {
-      file_deny_write(file_descriptor_ptr);
-    }
-    return file_write(file_descriptor_ptr, buffer, fd_size);
-  }
-  return -1;
-}
+// int sys_write(int fd, const void *buffer, unsigned fd_size)
+// {
+//   if (fd == 1)
+//   {
+//     putbuf(buffer, fd_size);
+//     return fd_size;
+//   }
+//   else if (fd > 2)
+//   {
+//     struct file *file_descriptor_ptr = thread_current()->file_descriptor[fd];
+//     if (file_descriptor_ptr == NULL)
+//     {
+//       sys_exit(-1);
+//     }
+//     if (file_descriptor_ptr->deny_write)
+//     {
+//       printf("check denying\n");
+
+//       file_deny_write(file_descriptor_ptr);
+//     }
+//     return file_write(file_descriptor_ptr, buffer, fd_size);
+//   }
+//   return -1;
+// }
 
 int read(int fd, void *buffer, unsigned size)
 {
@@ -394,6 +396,8 @@ int write(int fd, void *buffer, unsigned size)
     }
     if (file_descriptor_ptr->deny_write)
     {
+      // printf("check denying\n");
+
       file_deny_write(file_descriptor_ptr);
     }
     val = file_write(file_descriptor_ptr, buffer, size);
@@ -436,7 +440,6 @@ int write(int fd, void *buffer, unsigned size)
 //   }
 //   return -1;
 // }
-
 // todo delete
 //
 int open(const char *file)
@@ -461,7 +464,7 @@ int open(const char *file)
       {
         if (strcmp(thread_current()->name, file) == 0)
         {
-          printf("check denying\n");
+          // printf("check denying\n");
           file_deny_write(fp);
         }
         thread_current()->file_descriptor[i] = fp;

@@ -5,6 +5,8 @@
 #include <list.h>
 #include <stdint.h>
 
+#include "threads/synch.h" //todo
+
 /* States in a thread's life cycle. */
 enum thread_status
 {
@@ -90,16 +92,22 @@ struct thread
   int priority;              /* Priority. */
   struct list_elem allelem;  /* List element for all threads list. */
 
-  /* ---- project_1_Alarm_System_Call ---- */
-  int64_t wait_until; /* save tick when to wake up */
-  /* ------------------------------------- */
-
   /* Shared between thread.c and synch.c. */
   struct list_elem elem; /* List element. */
 
 #ifdef USERPROG
   /* Owned by userprog/process.c. */
   uint32_t *pagedir; /* Page directory. */
+  /* --------- project_2_parent_child_hierarchy ---------- */
+  struct semaphore load_sema;
+  struct semaphore exit_sema;
+  struct list child_list;
+  struct list_elem child_elem;
+  // struct thread *parent_thread;
+  // bool load_done;
+  // bool exit_done;
+  int exit_status;
+  /* -------------------------------------- */
 #endif
 
   /* Owned by thread.c. */
@@ -110,23 +118,6 @@ struct thread
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
-
-/* ----------------- project_1 ADDED ----------------- */
-
-// Part 1. Alarm Clock
-/* getter & setter for first_awake_tick (alarm clock) */
-void set_first_awake_tick(int16_t ticks);
-int64_t get_first_awake_tick(void);
-
-/* sleep thread for ticks time */
-void thread_sleep(int64_t ticks);
-void thread_awake(int64_t ticks);
-
-// Part 2. Priority Scheduling
-bool cmp_thread_priority(const struct list_elem *p, const struct list_elem *q, void *aux UNUSED);
-void cmp_curThread_readyList_priority(void);
-
-/* --------------------------------------------------- */
 
 void thread_init(void);
 void thread_start(void);

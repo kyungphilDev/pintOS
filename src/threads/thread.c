@@ -20,12 +20,6 @@
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
 
-/* ----------------- project_1 ADDED ----------------- */
-static struct list sleep_list;   /* save the sleeping(waiting) threads */
-static int64_t first_awake_tick; /* save the first tick time to awake */
-
-/* --------------------------------------------------- */
-
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
@@ -97,9 +91,6 @@ void thread_init(void)
   lock_init(&tid_lock);
   list_init(&ready_list);
   list_init(&all_list);
-
-  list_init(&sleep_list); /* ADD_project_1 alarm clock */
-  first_awake_tick = INT64_MAX;
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread();
@@ -204,7 +195,6 @@ tid_t thread_create(const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock(t);
-  cmp_curThread_readyList_priority(); // [EDITED_project_1_priority_scheduling]
 
   return tid;
 }
@@ -240,7 +230,7 @@ void thread_unblock(struct thread *t)
 
   old_level = intr_disable();
   ASSERT(t->status == THREAD_BLOCKED);
-  list_insert_ordered(&ready_list, &t->elem, cmp_thread_priority, 0); // push current unblocked elem(thread) descending [EDITED_project_1_priority_scheduling]
+  list_push_back(&ready_list, &t->elem);
   t->status = THREAD_READY;
   intr_set_level(old_level);
 }
@@ -308,9 +298,7 @@ void thread_yield(void)
 
   old_level = intr_disable();
   if (cur != idle_thread)
-  {
-    list_insert_ordered(&ready_list, &cur->elem, cmp_thread_priority, 0); // push current elem(thread) descending [EDITED_project_1_priority_scheduling]
-  }
+    list_push_back(&ready_list, &cur->elem);
   cur->status = THREAD_READY;
   schedule();
   intr_set_level(old_level);
@@ -335,12 +323,7 @@ void thread_foreach(thread_action_func *func, void *aux)
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void thread_set_priority(int new_priority)
 {
-  // thread_current()->priority = new_priority;
-  if (!thread_mlfqs)
-  {
-    thread_current()->priority = new_priority;
-    cmp_curThread_readyList_priority();
-  }
+  thread_current()->priority = new_priority;
 }
 
 /* Returns the current thread's priority. */
@@ -471,6 +454,15 @@ init_thread(struct thread *t, const char *name, int priority)
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);
   intr_set_level(old_level);
+
+  /* ----- [ADDED_project_2_parent_child_hierarchy] ----- */
+#ifdef USERPROG
+  // sema_up(&(t->chil))
+  sema_init(&t->exit_sema, 0);
+  sema_init(&t->load_sema, 0);
+  list_init(&t->child_list);
+  list_push_back(&running_thread()->child_list, &t->child_elem);
+#endif
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -585,75 +577,3 @@ allocate_tid(void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
-
-/* ----------------- project_1 ADDED ----------------- */
-void set_first_awake_tick(int16_t ticks)
-{
-  // set minimum tick to awake.
-  first_awake_tick = (first_awake_tick < ticks) ? first_awake_tick : ticks;
-}
-int64_t get_first_awake_tick(void)
-{
-  return first_awake_tick;
-}
-
-void thread_sleep(int64_t ticks)
-{
-  struct thread *cur = thread_current();
-  enum intr_level old_level;
-
-  ASSERT(!intr_context());
-
-  old_level = intr_disable();
-  cur->wait_until = ticks;
-
-  if (cur != idle_thread)
-    list_push_back(&sleep_list, &cur->elem);
-
-  set_first_awake_tick(ticks);
-  thread_block();
-  intr_set_level(old_level);
-}
-
-void thread_awake(int64_t ticks)
-{
-  first_awake_tick = INT64_MAX;
-  struct list_elem *e = list_begin(&sleep_list);
-  struct thread *t;
-
-  while (e != list_end(&sleep_list))
-  {
-    t = list_entry(e, struct thread, elem);
-
-    if (t->wait_until <= ticks)
-    {
-      e = list_remove(&t->elem);
-      thread_unblock(t);
-    }
-    else
-    {
-      e = list_next(e);
-      set_first_awake_tick(t->wait_until);
-    }
-  }
-}
-// Part 2. Priority Scheduling
-bool cmp_thread_priority(const struct list_elem *p, const struct list_elem *q, void *aux UNUSED)
-{
-  /* descending order (p > q) */
-  return list_entry(p, struct thread, elem)->priority > list_entry(q, struct thread, elem)->priority;
-}
-
-void cmp_curThread_readyList_priority(void)
-{
-  if (!list_empty(&ready_list))
-  {
-    // thread_yield when ready_list's maximum priority is greater than cur_thread's priority
-    if (list_entry(list_front(&ready_list), struct thread, elem)->priority > thread_current()->priority)
-    {
-      thread_yield();
-    }
-  }
-}
-
-/* --------------------------------------------------- */

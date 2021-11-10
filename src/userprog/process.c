@@ -46,9 +46,26 @@ tid_t process_execute(const char *file_name)
 
   /* Create a new thread to execute FILE_NAME. */
   // printf("\n kyungphil_check: %s\n\n", token_file_name);
+  //todo check
+  if (filesys_open(token_file_name) == NULL)
+  {
+    return -1;
+  }
+
   tid = thread_create(token_file_name, PRI_DEFAULT, start_process, fn_copy);
+  sema_down(&thread_current()->load_lock); // todo check!!
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
+
+  //todo check
+  for (struct list_elem *e = list_begin(&thread_current()->child_list); e != list_end(&thread_current()->child_list); e = list_next(e))
+  {
+    struct thread *t = list_entry(e, struct thread, child_elem);
+    if (t->load_done == false)
+    {
+      return process_wait(tid);
+    }
+  }
   return tid;
 }
 /* [ADDED_Lab2_argument_passing] */
@@ -138,7 +155,8 @@ start_process(void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load(file_name_token, &if_.eip, &if_.esp); // [EDITED_Lab2_argument_passing]
 
-  /* [EDITED_Lab2_argument_passing] */ //todo
+  /* [EDITED_Lab2_argument_passing] */   //todo
+  thread_current()->load_done = success; // todo
   if (success)
   {
     /* [EDITED_Lab2_argument_passing] */
@@ -146,10 +164,13 @@ start_process(void *file_name_)
     // hex_dump(if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
   }
   /* ----------------------------- */ /* If load failed, quit. */
-
   palloc_free_page(file_name);
+  sema_up(&thread_current()->parent_thread->load_lock);
   if (!success)
+  {
     thread_exit();
+    // sys_exit(-1);
+  }
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in

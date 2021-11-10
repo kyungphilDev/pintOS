@@ -100,13 +100,16 @@ struct thread
   uint32_t *pagedir; /* Page directory. */
   /* --------- project_2_parent_child_hierarchy ---------- */
   struct semaphore load_sema;
+  struct semaphore load_lock;
   struct semaphore exit_sema;
   struct list child_list;
   struct list_elem child_elem;
-  // struct thread *parent_thread;
-  // bool load_done;
+  struct thread *parent_thread;
+  bool load_done;
   // bool exit_done;
   int exit_status;
+  /* --------- project_2_file_descriptor ---------- */
+  struct file *file_descriptor[128];
   /* -------------------------------------- */
 #endif
 

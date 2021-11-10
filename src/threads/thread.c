@@ -457,9 +457,16 @@ init_thread(struct thread *t, const char *name, int priority)
 
   /* ----- [ADDED_project_2_parent_child_hierarchy] ----- */
 #ifdef USERPROG
-  // sema_up(&(t->chil))
+  /* ----- [ADDED_project_2_file_descriptor] ----- */
+  for (int p = 0; p < 128; p++)
+  {
+    t->file_descriptor[p] = NULL;
+  }
+  t->parent_thread = running_thread();
+  t->load_done = false;
   sema_init(&t->exit_sema, 0);
   sema_init(&t->load_sema, 0);
+  sema_init(&t->load_lock, 0);
   list_init(&t->child_list);
   list_push_back(&running_thread()->child_list, &t->child_elem);
 #endif

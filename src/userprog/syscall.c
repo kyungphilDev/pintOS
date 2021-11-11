@@ -9,9 +9,10 @@
 #include "filesys/file.h"
 #include "userprog/process.h"
 #include "threads/synch.h"
-
-#define PHYS_BASE 0xc0000000;
-//todo
+#define PHYS_BASE 0xc0000000
+/* [ADDED_Lab2_Denying_write] */
+#define FD_STDIN 0
+#define FD_STDOUT 1
 #include "filesys/off_t.h"
 struct file
 {
@@ -19,17 +20,16 @@ struct file
   off_t pos;           /* Current position. */
   bool deny_write;     /* Has file_deny_write() been called? */
 };
-
+/* -------------------------- */
 static void syscall_handler(struct intr_frame *);
 
 void syscall_init(void)
 {
-  lock_init(&file_lock); // check
+  lock_init(&lock_file); // [ADDED_Lab2_read_write_syncronization]
   intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
-static void
-syscall_handler(struct intr_frame *f)
+static void syscall_handler(struct intr_frame *f)
 {
   int MAX_ARG = 7;
   int argv[MAX_ARG];
@@ -38,7 +38,6 @@ syscall_handler(struct intr_frame *f)
   is_userArea(esp);
   int syscall_code = *(int *)esp;
   // printf("\n kyungphil_syscall_code: %d\n", syscall_code);
-
   /* sys call handler */
   switch (syscall_code)
   {
@@ -57,105 +56,105 @@ syscall_handler(struct intr_frame *f)
   case SYS_WRITE:
   {
     read_arg(esp, argv, 3);
-    // is_userArea((void *)argv[1]);
-    f->eax = write(argv[0], (void *)argv[1], (unsigned)argv[2]);
+    int ret = -1;
+    int num_fd = argv[0];
+    void *buf = (void *)argv[1];
+    unsigned file_size = (unsigned)argv[2];
+
+    is_userArea(buf);
+    lock_acquire(&lock_file); // [ADDED_for the file syncronization]
+    if (num_fd == FD_STDOUT)  // Monitor File Object
+    {
+      putbuf(buf, file_size);
+      ret = file_size;
+    }
+    else if (num_fd > 2) // I/O File Object
+    {
+      struct file *file_descriptor_ptr = thread_current()->file_descriptor[num_fd];
+      if (file_descriptor_ptr == NULL)
+      {
+        lock_release(&lock_file);
+        sys_exit(-1);
+      }
+      if (file_descriptor_ptr->deny_write)
+      {
+        // printf("check denying\n");
+        file_deny_write(file_descriptor_ptr);
+      }
+      ret = file_write(file_descriptor_ptr, buf, file_size);
+    }
+    lock_release(&lock_file);
+    f->eax = ret; // set return value
     break;
   }
-  case SYS_CREATE: //check
+  case SYS_CREATE:
   {
     read_arg(esp, argv, 2); // read create args
-    // is_userArea((void *)argv[0]);
-    // set return value of function
     char *file = (char *)argv[0];
     unsigned size_file = argv[1];
     if (file == NULL)
     {
-      // printf("\nsys create\n");
       sys_exit(-1);
     }
     bool ret = filesys_create(file, size_file);
-    f->eax = ret;
+    f->eax = ret; // set return value
     break;
   }
-  case SYS_REMOVE: //check
+  case SYS_REMOVE:
   {
     read_arg(esp, argv, 1); // read remove args
     // is_userArea((void *)argv[0]);
-    char *file = (char *)argv[0];
-    if (file == NULL)
-    {
-      printf("\nsys remove\n");
-      sys_exit(-1);
-    }
-    bool ret = filesys_remove(file);
+    char *fileName = (char *)argv[0];
+    check_file_name_NULL(fileName);
+    bool ret = filesys_remove(fileName);
     f->eax = ret;
     break;
   }
-  case SYS_OPEN: //check
+  case SYS_OPEN:
   {
     read_arg(esp, argv, 1); // read open args
-    // is_userArea((void *)argv[0]);
-    char *file = (char *)argv[0];
-    // f->eax = open(file);
-    // int ret = -1;
-    // if (file == NULL)
-    // {
-    //   // printf("sys_open\n");
-    //   sys_exit(-1);
-    // }
-    // lock_acquire(&file_lock);
-    // struct file *file_ptr = filesys_open(file);
-    // if (file_ptr)
-    // {
-    //   // ret = add_to_fd(f, filename);
-    //   for (int p = 3; p < 128; p++)
-    //   {
-    //     if (thread_current()->file_descriptor[p] == NULL)
-    //     {
-    //       thread_current()->file_descriptor[p] = file_ptr;
-    //       ret = p;
-    //       break;
-    //     }
-    //   }
-    // }
-    // lock_release(&file_lock);
-    f->eax = open(file);
+    char *fileName = (char *)argv[0];
+    int ret = 1;
+    check_file_name_NULL(fileName);
+    lock_acquire(&lock_file);
+    struct file *file_open = filesys_open(fileName);
+    if (file_open == NULL) // open failed
+    {
+      f->eax = -1;
+      lock_release(&lock_file);
+      break;
+    }
+    for (int i = 3; i < 128; i++) // I/O File Object
+    {
+      if (thread_current()->file_descriptor[i] == NULL)
+      {
+        if (strcmp(thread_current()->name, fileName) == 0)
+        {
+          // printf("check denying\n");
+          file_deny_write(file_open);
+        }
+        thread_current()->file_descriptor[i] = file_open;
+        f->eax = i;
+        break;
+      }
+    }
+    lock_release(&lock_file);
     break;
   }
-  case SYS_FILESIZE: //check
+  case SYS_FILESIZE:
   {
     read_arg(esp, argv, 1); // read filesize args
-    // is_userArea((void *)argv[0]);
     int num = (int)argv[0];
-    if (thread_current()->file_descriptor[num] == NULL)
-    {
-      // printf("\nsys filesize\n");
-      sys_exit(-1);
-    }
-    f->eax = file_length(thread_current()->file_descriptor[num]);
-
-    // int fd, ret;
-    // fd = fd_lookup(filename);
-    // struct file *f_read = get_file(fd);
-    // if (f_read != NULL)
-    // {
-    //   ret = file_length(f_read);
-    // }
-    // f->eax = ret;
+    struct file *file_fd = thread_current()->file_descriptor[num];
+    check_file_NULL(file_fd);
+    f->eax = file_length(file_fd);
     break;
   }
   case SYS_EXEC:
   {
-    // printf("\n kyungphil_syscall\n");
     read_arg(esp, argv, 1);
-    // is_userArea((void *)argv[0]);
-    // f->eax = -1; // todo
-    /* wait for child */
     char *exec_file = (char *)argv[0];
     tid_t pid = process_execute(exec_file);
-    // struct thread *child = get_child(pid); // todo
-    // sema_down(&child->load_sema); //todo
-    // if (child->load_done) //todo
     f->eax = pid;
     break;
   }
@@ -167,82 +166,65 @@ syscall_handler(struct intr_frame *f)
     f->eax = status;
     break;
   }
-  case SYS_READ: //check
+  case SYS_READ:
   {
     read_arg(esp, argv, 3); // read args for read-op
-    // is_userArea((void *)argv[0]);
-    int fd = argv[0];
-    void *buffer = (void *)argv[1];
+    int num_fd = argv[0];
+    void *buf = (void *)argv[1];
     unsigned size_file = argv[2];
-    int ret = read(fd, buffer, size_file);
+    is_userArea(buf);
+    lock_acquire(&lock_file);
+    if (num_fd == FD_STDIN) //STDIN
+    {
+      int p;
+      for (p = 0; p < size_file; p++)
+      {
+        if (((char *)buf)[p] == '\0')
+          break;
+      }
+      f->eax = p;
+      lock_release(&lock_file);
+      break;
+    }
+    int ret;
+    if (num_fd > 2)
+    {
+      struct file *file_fd = thread_current()->file_descriptor[num_fd];
+      check_file_NULL(file_fd);
+      ret = file_read(file_fd, buf, size_file);
+    }
     f->eax = ret;
+    lock_release(&lock_file);
     break;
   }
-  case SYS_SEEK: //check
+  case SYS_SEEK:
   {
     read_arg(esp, argv, 2); // read file args
-    // is_userArea((void *)argv[0]);
-    int num = (int)argv[0];
+    int num_fd = (int)argv[0];
     unsigned pos = argv[1];
-    if (thread_current()->file_descriptor[num] == NULL)
-    {
-      // printf("\nsys seek\n");
-      sys_exit(-1);
-    }
-    file_seek(thread_current()->file_descriptor[num], pos);
-    // int fd;
-    // fd = fd_lookup(filename);
-    // struct file *f_read = get_file(fd);
-    // if (f_read != NULL)
-    // {
-    //   file_seek(f_read, pos);
-    // }
+    struct file *file_fd = thread_current()->file_descriptor[num_fd];
+    check_file_NULL(file_fd);
+    file_seek(file_fd, pos);
     break;
   }
-  case SYS_TELL: //check
+  case SYS_TELL:
   {
     read_arg(esp, argv, 1); // read file args
-    // is_userArea((void *)argv[0]);
-    int num = (int)argv[0];
-    if (thread_current()->file_descriptor[num] == NULL)
-    {
-      // printf("\nsys tesll\n");
-      sys_exit(-1);
-    }
-    f->eax = (unsigned)file_tell(thread_current()->file_descriptor[num]);
-    // char *filename = (char *)argv[0];
-    // int fd, ret;
-    // fd = fd_lookup(filename);
-    // struct file *f_read = get_file(fd);
-    // if (f_read != NULL)
-    // {
-    //   ret = file_tell(f_read);
-    // }
-    // f->eax = ret;
+    int fd_num = (int)argv[0];
+    struct file *file_fd = thread_current()->file_descriptor[fd_num];
+    check_file_NULL(file_fd);
+    f->eax = (unsigned)file_tell(file_fd);
     break;
   }
-  case SYS_CLOSE: //check
+  case SYS_CLOSE:
   {
     read_arg(esp, argv, 1); // read filesize args
-    // is_userArea((void *)argv[0]);
-    int num = (int)argv[0];
-    close(num);
-    // if (thread_current()->file_descriptor[num] == NULL)
-    // {
-    //   sys_exit(-1);
-    // }
-    // file_close(thread_current()->file_descriptor[num]); //check
-    // int fd;
-    // fd = fd_lookup(filename);
-    // if (fd >= 2)
-    // {
-    //   close_file(fd);
-    // }
+    int num_fd = (int)argv[0];
+    sys_close(num_fd);
     break;
   }
   }
 }
-
 /* [ADDED_Lab2_system_call] */
 void is_userArea(void *uaddr)
 {
@@ -284,206 +266,28 @@ void sys_exit(int exit_status)
     if (thread_current()->file_descriptor[p] != NULL)
     {
       // printf("sys_exit\n");
-      close(p);
-      // file_close(thread_current()->file_descriptor[p]); //check
+      sys_close(p);
     }
   }
   thread_exit();
 }
-
-// todo -------------------아래 다
-// int sys_write(int fd, const void *buffer, unsigned fd_size)
-// {
-//   if (fd == 1)
-//   {
-//     putbuf(buffer, fd_size);
-//     return fd_size;
-//   }
-//   else if (fd > 2)
-//   {
-//     struct file *file_descriptor_ptr = thread_current()->file_descriptor[fd];
-//     if (file_descriptor_ptr == NULL)
-//     {
-//       sys_exit(-1);
-//     }
-//     if (file_descriptor_ptr->deny_write)
-//     {
-//       printf("check denying\n");
-
-//       file_deny_write(file_descriptor_ptr);
-//     }
-//     return file_write(file_descriptor_ptr, buffer, fd_size);
-//   }
-//   return -1;
-// }
-
-int read(int fd, void *buffer, unsigned size)
+void sys_close(int num_fd)
 {
-  int i;
-  int val;
-  is_userArea(buffer);
-  lock_acquire(&file_lock);
-  is_userArea(buffer);
-  if (fd == 0)
-  {
-    for (i = 0; i < size; i++)
-    {
-      if (((char *)buffer)[i] == '\0')
-      {
-        break;
-      }
-    }
-    val = i;
-  }
-  else if (fd > 2)
-  {
-    if (thread_current()->file_descriptor[fd] == NULL)
-    {
-      // printf("\nsys read\n");
-      sys_exit(-1);
-    }
-    val = file_read(thread_current()->file_descriptor[fd], buffer, size);
-  }
-  lock_release(&file_lock);
-  return val;
-  // lock_acquire(&file_lock);
-  // if (fd == 0) //STDIN
-  // {
-  //   int i = size;
-  //   char *buf = (char *)buffer;
-  //   while (i--)
-  //   {
-  //     buf[i] = input_getc();
-  //   }
-  //   lock_release(&file_lock);
-  //   return size;
-  // }
-  // else
-  // {
-  //   struct file *f = get_file(fd);
-  //   if (f == NULL)
-  //   {
-  //     lock_release(&file_lock);
-  //     return -1;
-  //   }
-  //   int i;
-  //   i = file_read(f, buffer, size);
-  //   lock_release(&file_lock);
-
-  //   return i;
-  // }
-}
-
-int write(int fd, void *buffer, unsigned size)
-{
-  int val = -1;
-  is_userArea(buffer);
-  lock_acquire(&file_lock);
-
-  if (fd == 1)
-  {
-    putbuf(buffer, size);
-    val = size;
-  }
-  else if (fd > 2)
-  {
-    struct file *file_descriptor_ptr = thread_current()->file_descriptor[fd];
-
-    if (file_descriptor_ptr == NULL)
-    {
-      lock_release(&file_lock);
-      sys_exit(-1);
-    }
-    if (file_descriptor_ptr->deny_write)
-    {
-      // printf("check denying\n");
-
-      file_deny_write(file_descriptor_ptr);
-    }
-    val = file_write(file_descriptor_ptr, buffer, size);
-  }
-  lock_release(&file_lock);
-  return val;
-  // lock_acquire(&file_lock);
-  // if (fd == 1) //STDOUT
-  // {
-  //   putbuf(buffer, size);
-  //   lock_release(&file_lock);
-  //   return size;
-  // }
-  // else
-  // {
-  //   struct file *f = get_file(fd);
-  //   if (f == NULL)
-  //   {
-  //     lock_release(&file_lock);
-  //     return -1;
-  //   }
-  //   int i;
-  //   i = file_write(f, buffer, size);
-  //   lock_release(&file_lock);
-
-  //   return i;
-  // }
-}
-
-// int fd_lookup(char *filename) //filename to fd
-// {
-//   struct thread *t = thread_current();
-//   int i = 2;
-//   for (i = 2; i < 128; i++)
-//   {
-//     if (strcmp(filename, t->fd_name[i]) == 0)
-//     {
-//       return i;
-//     }
-//   }
-//   return -1;
-// }
-// todo delete
-//
-int open(const char *file)
-{
-  int i;
-  int val = 1;
-  if (file == NULL)
-  {
-    sys_exit(-1);
-  }
-  lock_acquire(&file_lock);
-  struct file *fp = filesys_open(file);
-  if (fp == NULL)
-  {
-    val = -1;
-  }
-  else
-  {
-    for (i = 3; i < 128; i++)
-    {
-      if (thread_current()->file_descriptor[i] == NULL)
-      {
-        if (strcmp(thread_current()->name, file) == 0)
-        {
-          // printf("check denying\n");
-          file_deny_write(fp);
-        }
-        thread_current()->file_descriptor[i] = fp;
-        val = i;
-        break;
-      }
-    }
-  }
-  lock_release(&file_lock);
-  return val;
-}
-void close(int fd)
-{
-  if (thread_current()->file_descriptor[fd] == NULL)
-  {
-    // printf("\nsysclose\n");
-    sys_exit(-1);
-  }
-  struct file *fp = thread_current()->file_descriptor[fd];
-  thread_current()->file_descriptor[fd] = NULL;
+  struct file *file_fd = thread_current()->file_descriptor[num_fd];
+  check_file_NULL(file_fd);
+  struct file *fp = thread_current()->file_descriptor[num_fd];
+  thread_current()->file_descriptor[num_fd] = NULL;
   return file_close(fp);
+}
+
+/* [ADDED_Lab2_system_call] */
+void check_file_name_NULL(char *file)
+{
+  if (file == NULL)
+    sys_exit(-1);
+}
+void check_file_NULL(struct file *file_fd)
+{
+  if (file_fd == NULL)
+    sys_exit(-1);
 }

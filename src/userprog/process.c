@@ -45,26 +45,19 @@ tid_t process_execute(const char *file_name)
   char *token_file_name = strtok_r(tmp_file_name, " ", &unused_ptr);
 
   /* Create a new thread to execute FILE_NAME. */
-  // printf("\n kyungphil_check: %s\n\n", token_file_name);
-  //todo check
-  if (filesys_open(token_file_name) == NULL)
-  {
+  if (filesys_open(token_file_name) == NULL) // for null teststing
     return -1;
-  }
-
+  // printf("\n kyungphil_check: %s\n\n", token_file_name);
   tid = thread_create(token_file_name, PRI_DEFAULT, start_process, fn_copy);
-  sema_down(&thread_current()->load_lock); // todo check!!
+  sema_down(&thread_current()->load_lock); // [ADDED_project2_parent_child_hierarchy]
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
-
-  //todo check
+  // [ADDED_project2_parent_child_hierarchy]
   for (struct list_elem *e = list_begin(&thread_current()->child_list); e != list_end(&thread_current()->child_list); e = list_next(e))
   {
     struct thread *t = list_entry(e, struct thread, child_elem);
     if (t->load_done == false)
-    {
       return process_wait(tid);
-    }
   }
   return tid;
 }
@@ -155,23 +148,20 @@ start_process(void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load(file_name_token, &if_.eip, &if_.esp); // [EDITED_Lab2_argument_passing]
 
-  /* [EDITED_Lab2_argument_passing] */   //todo
-  thread_current()->load_done = success; // todo
+  /* [EDITED_Lab2_argument_passing] */
+  thread_current()->load_done = success; // check whether load completed or not
   if (success)
   {
     /* [EDITED_Lab2_argument_passing] */
     save_stack(token_list, cnt_token, &if_.esp);
     // hex_dump(if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
   }
-  /* ----------------------------- */ /* If load failed, quit. */
+  /* ----------------------------- */
+  /* If load failed, quit. */
   palloc_free_page(file_name);
   sema_up(&thread_current()->parent_thread->load_lock);
   if (!success)
-  {
-    // thread_exit();
     sys_exit(-1);
-  }
-
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -202,7 +192,7 @@ int process_wait(tid_t child_tid)
   sema_down(&child->exit_sema);               // wait for child process done
   int child_exit_status = child->exit_status; // initiate child's exist status
   remove_child(child);
-  sema_up(&child->load_sema); // todo
+  sema_up(&child->load_sema);
   return child_exit_status;
 }
 
@@ -228,9 +218,9 @@ void process_exit(void)
     pagedir_activate(NULL);
     pagedir_destroy(pd);
   }
-  /* [ADDED_Lab2_parent_child] */ // todo
+  /* [ADDED_Lab2_parent_child] */
   sema_up(&cur->exit_sema);
-  sema_down(&cur->load_sema); // todo
+  sema_down(&cur->load_sema);
   /* -------------------------- */
 }
 

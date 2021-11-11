@@ -4,8 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-
-#include "threads/synch.h" //todo
+#include "threads/synch.h" // [ADDED_project2_parent_child_hierarchy]
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -106,7 +105,6 @@ struct thread
   struct list_elem child_elem;
   struct thread *parent_thread;
   bool load_done;
-  // bool exit_done;
   int exit_status;
   /* --------- project_2_file_descriptor ---------- */
   struct file *file_descriptor[128];

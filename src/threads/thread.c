@@ -458,7 +458,8 @@ init_thread(struct thread *t, const char *name, int priority)
   /* ----- [ADDED_project_2_parent_child_hierarchy] ----- */
 #ifdef USERPROG
   /* ----- [ADDED_project_2_file_descriptor] ----- */
-  for (int p = 0; p < 128; p++)
+ int p;
+ for (p = 0; p < 128; p++)
   {
     t->file_descriptor[p] = NULL;
   }

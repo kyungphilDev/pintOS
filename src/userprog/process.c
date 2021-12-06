@@ -53,7 +53,8 @@ tid_t process_execute(const char *file_name)
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
   // [ADDED_project2_parent_child_hierarchy]
-  for (struct list_elem *e = list_begin(&thread_current()->child_list); e != list_end(&thread_current()->child_list); e = list_next(e))
+  struct list_elem *e;
+  for (e = list_begin(&thread_current()->child_list); e != list_end(&thread_current()->child_list); e = list_next(e))
   {
     struct thread *t = list_entry(e, struct thread, child_elem);
     if (t->load_done == false)

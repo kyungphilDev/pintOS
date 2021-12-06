@@ -50,7 +50,7 @@ static void syscall_handler(struct intr_frame *f)
   {
     read_arg(esp, argv, 1); // read exit status from args
     int exit_status = argv[0];
-    sys_exit(argv[0]);
+    sys_exit(exit_status);
     break;
   }
   case SYS_WRITE:
@@ -75,11 +75,6 @@ static void syscall_handler(struct intr_frame *f)
       {
         lock_release(&lock_file);
         sys_exit(-1);
-      }
-      if (file_descriptor_ptr->deny_write)
-      {
-        // printf("check denying\n");
-        file_deny_write(file_descriptor_ptr);
       }
       ret = file_write(file_descriptor_ptr, buf, file_size);
     }
@@ -114,7 +109,6 @@ static void syscall_handler(struct intr_frame *f)
   {
     read_arg(esp, argv, 1); // read open args
     char *fileName = (char *)argv[0];
-    int ret = 1;
     check_file_name_NULL(fileName);
     lock_acquire(&lock_file);
     struct file *file_open = filesys_open(fileName);
@@ -124,7 +118,8 @@ static void syscall_handler(struct intr_frame *f)
       lock_release(&lock_file);
       break;
     }
-    for (int i = 3; i < 128; i++) // I/O File Object
+    int i;
+    for (i = 3; i < 128; i++) // I/O File Object
     {
       if (thread_current()->file_descriptor[i] == NULL)
       {

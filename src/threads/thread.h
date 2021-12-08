@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/synch.h" // [ADDED_project2_parent_child_hierarchy]
+#include <hash.h>          // [ADDED_lab3]
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -110,7 +111,9 @@ struct thread
   struct file *file_descriptor[128];
   /* -------------------------------------- */
 #endif
-
+  // [ADDED_LAB3]
+  struct hash vm;
+  struct list mmap_list;
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
 };

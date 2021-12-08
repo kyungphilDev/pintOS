@@ -18,6 +18,11 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+// added_lab3
+#include "vm/page.h"
+bool handle_mm_fault(struct vm_entry *vme);
+bool load_file(void *kaddr, struct vm_entry *vme);
+
 static thread_func start_process NO_RETURN;
 static bool load(const char *cmdline, void (**eip)(void), void **esp);
 
@@ -138,31 +143,67 @@ start_process(void *file_name_)
   bool success;
 
   /* [ADDED_Lab2_argument_passing] */
-  char *token_list[LOADER_ARGS_LEN / 2 + 1];
-  int cnt_token = tokenize(token_list, file_name);
-  char *file_name_token = token_list[0];
+  char **argv;
+  char *token;
+  char *saveptr;
+  int argc = 0;
+  int i;
+  for (token = strtok_r(file_name, " ", &saveptr);
+       token != NULL;
+       token = strtok_r(NULL, " ", &saveptr))
+  {
+    if (argc == 0)
+    {
+      argv = palloc_get_page(0);
+    }
+    argv[argc] = palloc_get_page(0);
+    strlcpy(argv[argc++], token, strlen(token) + 1);
+  }
+  // added_lab3
+  vm_init(&thread_current()->vm);
+  list_init(&thread_current()->mmap_list);
+  // char *token_list[LOADER_ARGS_LEN / 2 + 1];
+  // int cnt_token = tokenize(token_list, file_name);
+  // char *file_name_token = token_list[0];
   /* ----------------------------- */
   /* Initialize interrupt frame and load executable. */
   memset(&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load(file_name_token, &if_.eip, &if_.esp); // [EDITED_Lab2_argument_passing]
+  success = load(file_name, &if_.eip, &if_.esp); // [EDITED_Lab2_argument_passing]
 
   /* [EDITED_Lab2_argument_passing] */
   thread_current()->load_done = success; // check whether load completed or not
+  sema_up(&thread_current()->parent_thread->load_lock);
+
+  /* If load failed, quit. */
+  palloc_free_page(file_name);
+  if (!success)
+  {
+    for (i = 0; i < argc; i++)
+    {
+      palloc_free_page(argv[i]);
+    }
+    palloc_free_page(argv);
+    thread_exit();
+  }
   if (success)
   {
     /* [EDITED_Lab2_argument_passing] */
-    save_stack(token_list, cnt_token, &if_.esp);
+    save_stack(argv, argc, &if_.esp);
     // hex_dump(if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
   }
   /* ----------------------------- */
-  /* If load failed, quit. */
-  palloc_free_page(file_name);
-  sema_up(&thread_current()->parent_thread->load_lock);
-  if (!success)
-    sys_exit(-1);
+
+  /* free */
+  for (i = 0; i < argc; i++)
+  {
+    palloc_free_page(argv[i]);
+  }
+  palloc_free_page(argv);
+  // if (!success)
+  //   sys_exit(-1);
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -203,6 +244,12 @@ void process_exit(void)
   struct thread *cur = thread_current();
   uint32_t *pd;
 
+  // added_lab3
+  if (cur->parent_thread != NULL)
+  {
+    munmap(-1);
+    vm_destroy(&cur->vm);
+  }
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -495,6 +542,21 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
          and zero the final PAGE_ZERO_BYTES bytes. */
     size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
     size_t page_zero_bytes = PGSIZE - page_read_bytes;
+    // added_lab3
+    // Create the vm_entry Object
+    struct vm_entry *vme = (struct vm_entry *)malloc(sizeof(struct vm_entry));
+
+    // Init the member of vm_entry
+    vme->type = VM_BIN;                // Binary File
+    vme->vaddr = upage;                // get virtual address from Program Header of ELF
+    vme->writable = writable;          // whether write is possible or impossible
+    vme->is_loaded = false;            // whether page is loaded or isn't loaded to physical memory
+    vme->file = file;                  // Mapped File
+    vme->offset = ofs;                 // Offset to read the file
+    vme->read_bytes = page_read_bytes; // Count of bytes to read
+    vme->zero_bytes = page_zero_bytes; // Count of bytes to pad the 0
+
+    insert_vme(&thread_current()->vm, vme); // Insert to hash table
 
     /* Get a page of memory. */
     uint8_t *kpage = palloc_get_page(PAL_USER);
@@ -520,6 +582,7 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
     read_bytes -= page_read_bytes;
     zero_bytes -= page_zero_bytes;
     upage += PGSIZE;
+    ofs += PGSIZE; // added_lab3
   }
   return true;
 }
@@ -528,7 +591,52 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
    user virtual memory. */
 static bool
 setup_stack(void **esp)
+// {
+//   struct vm_entry *vme;
+//   struct page *page;
+//   uint8_t *kpage;
+//   bool success = false;
+
+//   //kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+//   page = alloc_page(PAL_USER | PAL_ZERO);
+
+//   if (/*kpage != NULL*/ page->kaddr != NULL)
+//   {
+//     success = install_page(((uint8_t *)PHYS_BASE) - PGSIZE, page->kaddr /*kpage*/, true);
+//     if (success)
+//       *esp = PHYS_BASE;
+//     else
+//     {
+//       //palloc_free_page (kpage);
+//       free_page(page->kaddr);
+//     }
+//   }
+
+//   // Create the vm_entry Object
+//   vme = (struct vm_entry *)malloc(sizeof(struct vm_entry));
+
+//   // Init the member of vm_entry
+//   vme->type = VM_ANON;                          // Stack has not file, so i'm init like that
+//   vme->vaddr = ((uint8_t *)PHYS_BASE) - PGSIZE; // virtual address
+//   vme->writable = success;
+//   vme->is_loaded = success;
+//   vme->file = NULL;
+//   vme->offset = 0;
+//   vme->read_bytes = 0;
+//   vme->zero_bytes = 0;
+
+//   insert_vme(&thread_current()->vm, vme);
+
+//   //printf("vme->vaddr (stack) : %p\n", vme->vaddr);
+
+//   page->vme = vme;
+
+//   return success;
+// }
+
 {
+  struct vm_entry *vme;
+  struct page *page;
   uint8_t *kpage;
   bool success = false;
 
@@ -541,6 +649,26 @@ setup_stack(void **esp)
     else
       palloc_free_page(kpage);
   }
+
+  // Create the vm_entry Object
+  vme = (struct vm_entry *)malloc(sizeof(struct vm_entry));
+
+  // Init the member of vm_entry
+  vme->type = VM_ANON;                          // Stack has not file, so i'm init like that
+  vme->vaddr = ((uint8_t *)PHYS_BASE) - PGSIZE; // virtual address
+  vme->writable = success;
+  vme->is_loaded = success;
+  vme->file = NULL;
+  vme->offset = 0;
+  vme->read_bytes = 0;
+  vme->zero_bytes = 0;
+
+  insert_vme(&thread_current()->vm, vme);
+
+  //printf("vme->vaddr (stack) : %p\n", vme->vaddr);
+
+  // page->vme = vme;
+
   return success;
 }
 
@@ -581,4 +709,120 @@ void *remove_child(struct thread *p_cur)
   if (p_cur == NULL)
     return;
   list_remove(&p_cur->child_elem);
+}
+
+// added_lab3
+bool handle_mm_fault(struct vm_entry *vme)
+{
+  void *kaddr;
+  struct page *page;
+  bool flag_load;
+
+  kaddr = palloc_get_page(PAL_USER);
+  // page = alloc_page(PAL_USER);
+  // page->vme = vme;
+  //printf("-------------------------------------------------- %d\n", vme->type);
+  switch (vme->type)
+  {
+  case VM_BIN:
+  case VM_FILE:
+    // case VM_ANON:
+    flag_load = load_file(kaddr, vme);
+    // flag_load = load_file(page->kaddr, page->vme);
+    break;
+  // case VM_ANON:
+  // flag_load = swap_in(vme->swap_slot, page->kaddr);
+  //   break;
+  default:
+    return false;
+  }
+
+  if (!flag_load)
+  {
+    // free_page(page->kaddr);
+    palloc_free_page(kaddr);
+    return false;
+  }
+  // vme->is_loaded = install_page(vme->vaddr, /*kaddr*/ page->kaddr, vme->writable);
+  vme->is_loaded = install_page(vme->vaddr, /*kaddr*/ kaddr, vme->writable);
+
+  if (!vme->is_loaded)
+  {
+    palloc_free_page(kaddr);
+    // free_page(page->kaddr);
+  }
+
+  return vme->is_loaded;
+}
+bool load_file(void *kaddr, struct vm_entry *vme)
+{
+  int reads;
+
+  if (vme->read_bytes > 0)
+  {
+    reads = file_read_at(vme->file, kaddr, vme->read_bytes, vme->offset);
+    if (reads != (int)vme->read_bytes)
+    {
+      palloc_free_page(kaddr);
+      // free_page(kaddr);
+      return false;
+    }
+    memset(kaddr + vme->read_bytes, 0, vme->zero_bytes);
+  }
+  else
+  {
+    memset(kaddr, 0, PGSIZE);
+  }
+  return true;
+}
+
+#define STACK_LIMIT PHYS_BASE - (8 * 1024 * 1024)
+
+bool expand_stack(void *sp, void *addr)
+{
+  struct vm_entry *vme;
+  struct page *page;
+  void *vaddr;
+  bool success = false;
+
+  if (addr < sp - 32 || addr < STACK_LIMIT || !addr || !sp)
+  {
+    //printf("sp : %p\taddr : %p\n", sp, addr);
+    return false;
+  }
+
+  //printf("%p ==========\n", addr);
+
+  vaddr = pg_round_down(addr);
+
+  // uint8_t *kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+  page = alloc_page(PAL_USER | PAL_ZERO);
+
+  if (page != NULL)
+  {
+    success = install_page(vaddr, page->kaddr, true);
+    // success = install_page(vaddr, kpage, true);
+    if (!success)
+    {
+      // palloc_free_page(kpage);
+      free_page(page->kaddr);
+      return false;
+    }
+  }
+
+  vme = (struct vm_entry *)malloc(sizeof(struct vm_entry));
+  vme->type = VM_ANON;
+  vme->vaddr = pg_round_down(addr);
+  vme->writable = true;
+  vme->is_loaded = success;
+  vme->file = NULL;
+  vme->offset = 0;
+  vme->read_bytes = 0;
+  vme->zero_bytes = 0;
+
+  insert_vme(&thread_current()->vm, vme);
+
+  page->vme = vme;
+
+  return success;
 }

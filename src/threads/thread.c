@@ -193,6 +193,8 @@ tid_t thread_create(const char *name, int priority,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
+  // t->parent_thread = thread_current();
+
   /* Add to run queue. */
   thread_unblock(t);
 
@@ -458,8 +460,8 @@ init_thread(struct thread *t, const char *name, int priority)
   /* ----- [ADDED_project_2_parent_child_hierarchy] ----- */
 #ifdef USERPROG
   /* ----- [ADDED_project_2_file_descriptor] ----- */
- int p;
- for (p = 0; p < 128; p++)
+  int p;
+  for (p = 0; p < 128; p++)
   {
     t->file_descriptor[p] = NULL;
   }

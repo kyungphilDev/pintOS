@@ -14,12 +14,15 @@
 #define FD_STDIN 0
 #define FD_STDOUT 1
 #include "filesys/off_t.h"
-// added_lab3
+/* ---------------- [ADDED_LAB3] ---------------- */
 #include "vm/page.h"
-int mmap(int fd, void *addr); // For Memory Mapped File, Mapping with virtual page and return mapid
-void munmap(int mapid);       // For Memory Mapped File, Delete vm_entry and mmap_file
-struct vm_entry *check_address(void *addr, void *esp);
-
+int mmap(int fd, void *addr);
+void munmap(int map_id);
+void do_munmap(struct mmap_file *mmap_f);
+struct vm_entry *is_addr_right(void *addr, void *esp);
+void is_buffer_ok(void *buffer, unsigned size, void *esp, bool to_write);
+void is_string_ok(const void *str, void *esp);
+/* ------------------------------------------------ */
 struct file
 {
   struct inode *inode; /* File's inode. */
@@ -66,9 +69,7 @@ static void syscall_handler(struct intr_frame *f)
     int num_fd = argv[0];
     void *buf = (void *)argv[1];
     unsigned file_size = (unsigned)argv[2];
-    check_valid_string((void *)argv[1], esp);
-
-    // is_userArea(buf);
+    is_string_ok((void *)argv[1], esp);
     lock_acquire(&lock_file); // [ADDED_for the file syncronization]
     if (num_fd == FD_STDOUT)  // Monitor File Object
     {
@@ -94,11 +95,7 @@ static void syscall_handler(struct intr_frame *f)
     read_arg(esp, argv, 2); // read create args
     char *file = (char *)argv[0];
     unsigned size_file = argv[1];
-    // if (file == NULL)
-    // {
-    //   sys_exit(-1);
-    // }
-    check_valid_string((void *)argv[0], esp);
+    is_string_ok((void *)argv[0], esp);
     bool ret = filesys_create(file, size_file);
     f->eax = ret; // set return value
     break;
@@ -106,10 +103,8 @@ static void syscall_handler(struct intr_frame *f)
   case SYS_REMOVE:
   {
     read_arg(esp, argv, 1); // read remove args
-    // is_userArea((void *)argv[0]);
     char *fileName = (char *)argv[0];
-    // check_file_name_NULL(fileName);
-    check_valid_string((void *)argv[0], esp);
+    is_string_ok((void *)argv[0], esp);
     bool ret = filesys_remove(fileName);
     f->eax = ret;
     break;
@@ -118,8 +113,7 @@ static void syscall_handler(struct intr_frame *f)
   {
     read_arg(esp, argv, 1); // read open args
     char *fileName = (char *)argv[0];
-    // check_file_name_NULL(fileName);
-    check_valid_string((void *)argv[0], esp);
+    is_string_ok((void *)argv[0], esp);
     lock_acquire(&lock_file);
     struct file *file_open = filesys_open(fileName);
     if (file_open == NULL) // open failed
@@ -135,7 +129,6 @@ static void syscall_handler(struct intr_frame *f)
       {
         if (strcmp(thread_current()->name, fileName) == 0)
         {
-          // printf("check denying\n");
           file_deny_write(file_open);
         }
         thread_current()->file_descriptor[i] = file_open;
@@ -159,8 +152,7 @@ static void syscall_handler(struct intr_frame *f)
   {
     read_arg(esp, argv, 1);
     char *exec_file = (char *)argv[0];
-    check_valid_string((void *)argv[0], esp);
-
+    is_string_ok((void *)argv[0], esp);
     tid_t pid = process_execute(exec_file);
     f->eax = pid;
     break;
@@ -179,8 +171,7 @@ static void syscall_handler(struct intr_frame *f)
     int num_fd = argv[0];
     void *buf = (void *)argv[1];
     unsigned size_file = argv[2];
-    // is_userArea(buf);
-    check_valid_buffer((void *)argv[1], argv[2], esp, true);
+    is_buffer_ok((void *)argv[1], argv[2], esp, true);
     lock_acquire(&lock_file);
     if (num_fd == FD_STDIN) //STDIN
     {
@@ -233,7 +224,6 @@ static void syscall_handler(struct intr_frame *f)
   }
   case SYS_MMAP:
     read_arg(esp, argv, 2); // read filesize args
-    //check_valid_buffer((void*)arg[1], esp);
     f->eax = mmap(argv[0], (void *)argv[1]);
     break;
   case SYS_MUNMAP:
@@ -282,23 +272,9 @@ void sys_exit(int exit_status)
   cur->exit_status = exit_status;                   // Save Exit Status
   printf("%s: exit(%d)\n", cur->name, exit_status); // Output Exit Message
   thread_exit();                                    // Exit Thread
-  // struct thread *t = thread_current();
-  // t->exit_status = exit_status;
-  // printf("%s: exit(%d)\n", thread_name(), exit_status);
-  // int p;
-  // for (p = 3; p < 128; p++)
-  // {
-  //   if (thread_current()->file_descriptor[p] != NULL)
-  //   {
-  //     // printf("sys_exit\n");
-  //     sys_close(p);
-  //   }
-  // }
-  // thread_exit();
 }
 void sys_close(int num_fd)
 {
-  // struct file *file_fd = thread_current()->file_descriptor[num_fd];
   struct file *fp = thread_current()->file_descriptor[num_fd];
   check_file_NULL(fp);
   thread_current()->file_descriptor[num_fd] = NULL;
@@ -316,8 +292,8 @@ void check_file_NULL(struct file *file_fd)
   if (file_fd == NULL)
     sys_exit(-1);
 }
-//  added_lab3
-struct vm_entry *check_address(void *addr, void *esp)
+/* [ADDED_LAB3] */
+struct vm_entry *is_addr_right(void *addr, void *esp)
 {
   struct vm_entry *vme;
   uint32_t address = (uint32_t)addr;
@@ -327,47 +303,30 @@ struct vm_entry *check_address(void *addr, void *esp)
     sys_exit(-1);
   }
 
-  vme = find_vme(addr);
+  vme = search_vm_entry(addr);
 
   if (!vme)
   {
     if (expand_stack(esp, addr))
     {
-      vme = find_vme(addr);
+      vme = search_vm_entry(addr);
     }
   }
 
   return vme;
 }
-void check_valid_buffer(void *buffer, unsigned size, void *esp, bool to_write)
+/* [ADDED_LAB3] */
+void is_string_ok(const void *str, void *esp)
 {
   int i, pages;
-  struct vm_entry *vme_start = check_address(buffer, esp);
-  struct vm_entry *vme_end = check_address(buffer + size, esp);
+  struct vm_entry *vme_start = is_addr_right(str, esp);
+  struct vm_entry *vme_end = is_addr_right(str + strlen((char *)str), esp);
   struct vm_entry *vme;
 
   pages = ((int)(vme_start->vaddr - vme_end->vaddr) / PGSIZE) + 1;
   for (i = 0; i < pages; i++)
   {
-    vme = check_address(buffer + (PGSIZE * i), esp);
-
-    if (vme == NULL || !vme->writable)
-    {
-      sys_exit(-1);
-    }
-  }
-}
-void check_valid_string(const void *str, void *esp)
-{
-  int i, pages;
-  struct vm_entry *vme_start = check_address(str, esp);
-  struct vm_entry *vme_end = check_address(str + strlen((char *)str), esp);
-  struct vm_entry *vme;
-
-  pages = ((int)(vme_start->vaddr - vme_end->vaddr) / PGSIZE) + 1;
-  for (i = 0; i < pages; i++)
-  {
-    vme = check_address(str + (PGSIZE * i), esp);
+    vme = is_addr_right(str + (PGSIZE * i), esp);
 
     if (vme == NULL)
     {
@@ -375,128 +334,129 @@ void check_valid_string(const void *str, void *esp)
     }
   }
 }
+/* [ADDED_LAB3] */
+void is_buffer_ok(void *buffer, unsigned size, void *esp, bool to_write)
+{
+  int i, pages;
+  struct vm_entry *vme_start = is_addr_right(buffer, esp);
+  struct vm_entry *vme_end = is_addr_right(buffer + size, esp);
+  struct vm_entry *vme;
+  pages = ((int)(vme_start->vaddr - vme_end->vaddr) / PGSIZE) + 1;
+  for (i = 0; i < pages; i++)
+  {
+    vme = is_addr_right(buffer + (PGSIZE * i), esp);
+
+    if (vme == NULL || !vme->write_ok)
+    {
+      sys_exit(-1);
+    }
+  }
+}
+/* [ADDED_LAB3] */
 int mmap(int fd, void *addr)
 {
   struct thread *cur = thread_current();
-  struct mmap_file *mmf;
-  struct file *f;
   struct vm_entry *vme;
-  size_t read_bytes, page_read_bytes, page_zero_bytes, ofs = 0;
-  struct list_elem *elem, *tail = list_tail(&cur->mmap_list);
+  size_t read_bytes = 0;
+  size_t page_read_bytes = 0;
+  size_t page_zero_bytes = 0;
+  size_t ofs = 0;
+  struct list_elem *elem;
+  struct list_elem *tail = list_tail(&cur->mmap_list);
+  struct file *f;
+  struct mmap_file *mmap_f;
   struct inode *i;
 
-  // f = process_get_file(fd);
   f = thread_current()->file_descriptor[fd];
-  if (f == NULL || !addr || ((int)addr % PGSIZE))
+  if (f == NULL || ((int)addr % PGSIZE) || !addr)
   {
     return -1;
   }
+  mmap_f = (struct mmap_file *)malloc(sizeof(struct mmap_file));
+  mmap_f->map_id = (list_empty(&cur->mmap_list) == true) ? 0 : list_entry(list_end(&cur->mmap_list), struct mmap_file, elem)->map_id + 1;
+  mmap_f->file = file_reopen(f);
+  list_init(&mmap_f->vme_list);
 
-  // Create mmf_file Object
-  mmf = (struct mmap_file *)malloc(sizeof(struct mmap_file));
-
-  // Set members of mmf_file
-  mmf->mapid = (list_empty(&cur->mmap_list) == true) ? 0 : list_entry(list_end(&cur->mmap_list), struct mmap_file, elem)->mapid + 1;
-  //mmf->mapid = fd;
-
-  mmf->file = file_reopen(f);
-  list_init(&mmf->vme_list);
-
-  // Read File and map with vme
-  read_bytes = file_length(mmf->file);
-
-  while (0 < read_bytes)
+  read_bytes = file_length(mmap_f->file);
+  while (read_bytes > 0)
   {
     page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
     page_zero_bytes = PGSIZE - page_read_bytes;
-
-    if (find_vme(addr) != NULL)
+    if (search_vm_entry(addr) != NULL)
     {
-      munmap(mmf->mapid);
+      munmap(mmap_f->map_id);
       return -1;
     }
-
     vme = (struct vm_entry *)malloc(sizeof(struct vm_entry));
-
-    vme->type = VM_FILE;
+    vme->type = FILE_VM;
     vme->vaddr = addr;
-    vme->writable = true;
+    vme->write_ok = true;
     vme->is_loaded = false;
-    vme->file = mmf->file;
-    vme->offset = ofs;
+    vme->m_file = mmap_f->file;
     vme->read_bytes = page_read_bytes;
     vme->zero_bytes = page_zero_bytes;
-
-    list_push_back(&mmf->vme_list, &vme->mmap_elem);
-
-    insert_vme(&cur->vm, vme);
-
+    vme->offset = ofs;
+    list_push_back(&mmap_f->vme_list, &vme->mmap_elem);
+    insert_vm_entry(&cur->vm, vme);
     read_bytes -= page_read_bytes;
     ofs += page_read_bytes;
     addr += PGSIZE;
   }
-
-  list_push_back(&cur->mmap_list, &mmf->elem);
-
-  return mmf->mapid;
+  list_push_back(&cur->mmap_list, &mmap_f->elem);
+  return mmap_f->map_id;
 }
-
-void do_munmap(struct mmap_file *mmf)
+/* [ADDED_LAB3] */
+void do_munmap(struct mmap_file *mmap_f)
 {
   struct thread *cur = thread_current();
-  struct list_elem *elem, *temp, *tail = list_tail(&mmf->vme_list);
+  struct list_elem *elem;
+  struct list_elem *tail_elem = list_tail(&mmap_f->vme_list);
+  struct list_elem *tmp_elem;
   struct vm_entry *vme;
-
-  for (elem = list_begin(&mmf->vme_list);
-       elem != tail;)
+  for (elem = list_begin(&mmap_f->vme_list); elem != tail_elem;)
   {
-    temp = list_next(elem);
+    tmp_elem = list_next(elem);
     vme = list_entry(elem, struct vm_entry, mmap_elem);
-
     if (vme->is_loaded)
     {
       if (pagedir_is_dirty(cur->pagedir, vme->vaddr))
       {
         lock_acquire(&lock_file);
-        file_write_at(vme->file, vme->vaddr, vme->read_bytes, vme->offset);
+        file_write_at(vme->m_file, vme->vaddr, vme->read_bytes, vme->offset);
         lock_release(&lock_file);
       }
       palloc_free_page(pagedir_get_page(cur->pagedir, vme->vaddr));
-      // free_page(pagedir_get_page(cur->pagedir, vme->vaddr));
       pagedir_clear_page(cur->pagedir, vme->vaddr);
     }
     list_remove(&vme->mmap_elem);
-    delete_vme(&thread_current()->vm, vme);
+    delete_vm_entry(&thread_current()->vm, vme);
     free(vme);
-    elem = temp;
+    elem = tmp_elem;
   }
-
   lock_acquire(&lock_file);
-  file_close(mmf->file);
+  file_close(mmap_f->file);
   lock_release(&lock_file);
 }
-
-void munmap(int mapid)
+/* [ADDED_LAB3] */
+void munmap(int map_id)
 {
   struct thread *cur = thread_current();
-  struct mmap_file *mmf;
-  struct list_elem *elem, *temp;
-  struct list_elem *tail = list_tail(&cur->mmap_list);
-
-  for (elem = list_begin(&cur->mmap_list);
-       elem != tail;)
+  struct mmap_file *mmap_f;
+  struct list_elem *elem;
+  struct list_elem *tail_elem = list_tail(&cur->mmap_list);
+  struct list_elem *tmp_elem;
+  for (elem = list_begin(&cur->mmap_list); elem != tail_elem;)
   {
-    mmf = list_entry(elem, struct mmap_file, elem);
-
-    if (mapid == -1)
+    mmap_f = list_entry(elem, struct mmap_file, elem);
+    if (map_id == -1)
     {
-      temp = list_next(elem);
+      tmp_elem = list_next(elem);
       list_remove(elem);
-      do_munmap(mmf);
-      free(mmf);
-      elem = temp;
+      do_munmap(mmap_f);
+      free(mmap_f);
+      elem = tmp_elem;
     }
-    else if (mmf->mapid == mapid)
+    else if (mmap_f->map_id == map_id)
     {
       break;
     }
@@ -505,11 +465,10 @@ void munmap(int mapid)
       elem = list_next(elem);
     }
   }
-
-  if (elem != tail)
+  if (elem != tail_elem)
   {
     list_remove(elem);
-    do_munmap(mmf);
-    free(mmf);
+    do_munmap(mmap_f);
+    free(mmap_f);
   }
 }

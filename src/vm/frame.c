@@ -2,118 +2,78 @@
 
 extern struct lock lock_file;
 
-void lru_list_init(void)
+void LRU_start(void)
 {
   list_init(&lru_list);
-  lock_init(&lru_list_lock);
+  lock_init(&lock_LRU);
 }
 
-void add_page_to_lru_list(struct page *page)
+void LRU_add(struct page *page)
 {
-  lock_acquire(&lru_list_lock);
-  list_push_back(&lru_list, &page->lru);
-  lock_release(&lru_list_lock);
+  lock_acquire(&lock_LRU);
+  list_push_back(&lru_list, &page->lru_elem);
+  lock_release(&lock_LRU);
 }
 
-void del_page_from_lru_list(struct page *page)
+void *free_page_LRU(enum palloc_flags flags)
 {
-  lock_acquire(&lru_list_lock);
-  list_remove(&page->lru);
-  lock_release(&lru_list_lock);
-}
-
-void *try_to_free_pages(enum palloc_flags flags)
-{
-  struct page *victim;
-  struct list_elem *next;
-
+  struct page *tmp;
+  struct list_elem *nxt;
   if (list_empty(&lru_list))
   {
-    lru_clock = NULL;
+    LRU_c = NULL;
     return NULL;
   }
-
-  if (lru_clock == NULL)
+  if (LRU_c == NULL)
   {
-    lru_clock = list_begin(&lru_list);
+    LRU_c = list_begin(&lru_list);
   }
-
-  /*for (	elem = get_lru_clock();
-		; set_next_lru_clock(), elem = get_lru_clock())
-	{
-		victim = list_entry (elem, struct page, lru);
-		if (!pagedir_is_accessed(victim->thread->pagedir, victim->vme->vaddr))
-		{
-			set_next_lru_clock();
-			break;
-		}
-
-		pagedir_set_accessed(victim->thread->pagedir, victim->vme->vaddr, 0);
-	}*/
-  for (;;)
+  nxt = get_LRU_c();
+  tmp = list_entry(LRU_c, struct page, lru_elem);
+  LRU_c = nxt;
+  if (tmp->vme->type == FILE_VM)
   {
-    next = get_next_lru_clock();
-
-    victim = list_entry(lru_clock, struct page, lru);
-
-    lru_clock = next;
-
-    if (!pagedir_is_accessed(victim->thread->pagedir, victim->vme->vaddr))
-    {
-      break;
-    }
-    else
-    {
-      pagedir_set_accessed(victim->thread->pagedir, victim->vme->vaddr, false);
-    }
-  }
-
-  if (victim->vme->type == VM_FILE)
-  {
-    if (pagedir_is_dirty(victim->thread->pagedir, victim->vme->vaddr))
+    if (pagedir_is_dirty(tmp->thread->pagedir, tmp->vme->vaddr))
     {
       lock_acquire(&lock_file);
-      file_write_at(victim->vme->file, victim->vme->vaddr, victim->vme->read_bytes, victim->vme->offset);
+      file_write_at(tmp->vme->m_file, tmp->vme->vaddr, tmp->vme->read_bytes, tmp->vme->offset);
       lock_release(&lock_file);
     }
   }
   else
   {
-    victim->vme->swap_slot = swap_out(victim);
-    victim->vme->type = VM_ANON;
-    victim->vme->is_loaded = false;
+    tmp->vme->type = SWAP_VM;
+    tmp->vme->is_loaded = false;
+    tmp->vme->swap_slot = del_swap(tmp);
   }
-
-  free_page(victim->kaddr);
-
+  free_page(tmp->kaddr);
   return palloc_get_page(flags);
+}
+void LRU_del(struct page *page)
+{
+  lock_acquire(&lock_LRU);
+  list_remove(&page->lru_elem);
+  lock_release(&lock_LRU);
 }
 
 struct page *find_page(void *kaddr)
 {
   struct page *page;
   struct list_elem *elem, *tail;
-
-  lock_acquire(&lru_list_lock);
-
-  for (elem = list_front(&lru_list), tail = list_tail(&lru_list);
-       elem != tail;
-       elem = list_next(elem))
+  lock_acquire(&lock_LRU);
+  page = list_entry(elem, struct page, lru_elem);
+  if (page->kaddr == kaddr)
   {
-    page = list_entry(elem, struct page, lru);
-    if (page->kaddr == kaddr)
-    {
-      lock_release(&lru_list_lock);
-      return page;
-    }
+    lock_release(&lock_LRU);
+    return page;
   }
-
-  lock_release(&lru_list_lock);
-
+  lock_release(&lock_LRU);
   return NULL;
 }
 
-struct list_elem *get_next_lru_clock()
+struct list_elem *get_LRU_c()
 {
-  return (lru_clock->next == list_head(&lru_list)) ? lru_clock->next : list_begin(&lru_list);
+  if (LRU_c->next == list_head(&lru_list))
+    return LRU_c->next;
+  return list_begin(&lru_list);
 }

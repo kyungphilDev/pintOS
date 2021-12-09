@@ -1,101 +1,82 @@
 #include "vm/page.h"
 
-// Init the Hash Table
-void vm_init(struct hash *vm)
-{
-  hash_init(vm, vm_hash_func, vm_less_func, NULL);
-}
+static unsigned vm_hash(const struct hash_elem *hash_e, void *aux);
+static bool comp_less_vm(const struct hash_elem *a, const struct hash_elem *b, void *aux);
+static void delete_vm_hash(struct hash_elem *hash_e, void *aux);
 
-// Destroy the Hash Table
-void vm_destroy(struct hash *vm)
+void start_vm(struct hash *vm)
 {
-  hash_destroy(vm, vm_destroy_func);
+  hash_init(vm, vm_hash, comp_less_vm, NULL);
 }
-
-// Return Hash Value
-static unsigned vm_hash_func(const struct hash_elem *e, void *aux)
+static unsigned vm_hash(const struct hash_elem *hash_e, void *aux)
 {
-  struct vm_entry *vm = hash_entry(e, struct vm_entry, elem);
+  struct vm_entry *vm = hash_entry(hash_e, struct vm_entry, elem);
 
   return hash_int(vm->vaddr);
 }
 
-// If a->vaddr < b->vaddr, return true. Otherwise, return false
-static bool vm_less_func(const struct hash_elem *a, const struct hash_elem *b, void *aux)
+void delete_vm(struct hash *vm)
 {
-  return hash_entry(a, struct vm_entry, elem)->vaddr < hash_entry(b, struct vm_entry, elem)->vaddr;
+  hash_destroy(vm, delete_vm_hash);
 }
 
-// destroy the vm_entry
-static void vm_destroy_func(struct hash_elem *e, void *aux)
+static bool comp_less_vm(const struct hash_elem *hash_A, const struct hash_elem *hash_B, void *aux)
 {
-  struct vm_entry *vme = hash_entry(e, struct vm_entry, elem);
+  const struct vm_entry *hash_vm_A = hash_entry(hash_A, struct vm_entry, elem);
+  const struct vm_entry *hash_vm_B = hash_entry(hash_B, struct vm_entry, elem);
 
-  // If vme is loaded, free the kpage & delete pte from page table
+  return hash_vm_A->vaddr < hash_vm_B->vaddr;
+}
+
+static void delete_vm_hash(struct hash_elem *hash_e, void *aux)
+{
+  struct vm_entry *vme = hash_entry(hash_e, struct vm_entry, elem);
   if (vme->is_loaded)
   {
     palloc_free_page(pagedir_get_page(thread_current()->pagedir, vme->vaddr));
-    // free_page(pagedir_get_page(thread_current()->pagedir, vme->vaddr));
     pagedir_clear_page(thread_current()->pagedir, vme->vaddr);
   }
-
-  // Free the vme
   free(vme);
 }
 
-// Find the vm_entry object that got vaddr.
-struct vm_entry *find_vme(void *vaddr)
+struct vm_entry *search_vm_entry(void *vaddr)
 {
   struct vm_entry vm;
-  struct hash_elem *h;
+  struct hash_elem *hash_e;
   struct thread *cur = thread_current();
-
   vm.vaddr = pg_round_down(vaddr);
-
-  h = hash_find(&cur->vm, &vm.elem);
-
-  if (h == NULL)
+  hash_e = hash_find(&cur->vm, &vm.elem);
+  if (hash_e == NULL)
   {
-    return h;
+    return hash_e;
   }
-
-  return hash_entry(h, struct vm_entry, elem);
+  return hash_entry(hash_e, struct vm_entry, elem);
 }
-bool insert_vme(struct hash *vm, struct vm_entry *vme)
+bool insert_vm_entry(struct hash *vm, struct vm_entry *vme)
 {
-  return (hash_insert(vm, &vme->elem) == NULL) ? true : false;
+  if (hash_insert(vm, &vme->elem) == NULL)
+    return true;
+  return false;
 }
-bool delete_vme(struct hash *vm, struct vm_entry *vme)
+bool delete_vm_entry(struct hash *vm, struct vm_entry *vme)
 {
-  return (hash_delete(vm, &vme->elem) != NULL) ? true : false;
+  if (hash_delete(vm, &vme->elem) != NULL)
+    return true;
+  return false;
 }
 
-struct page *alloc_page(enum palloc_flags flags)
+struct page *page_alloc(enum palloc_flags palloc_f)
 {
   struct page *page;
-  void *kaddr = palloc_get_page(flags);
-
-  while (kaddr == NULL)
+  void *addr = palloc_get_page(palloc_f);
+  while (addr == NULL)
   {
-    kaddr = try_to_free_pages(flags);
+    addr = free_page_LRU(palloc_f);
   }
-
   page = (struct page *)malloc(sizeof(struct page));
-  page->kaddr = kaddr;
   page->thread = thread_current();
-
-  add_page_to_lru_list(page);
-
+  page->kaddr = addr;
   return page;
-}
-
-void do_free_page(struct page *page)
-{
-  page->vme->is_loaded = false;
-  del_page_from_lru_list(page);
-  pagedir_clear_page(page->thread->pagedir, page->vme->vaddr);
-  palloc_free_page(page->kaddr);
-  free(page);
 }
 
 void free_page(void *kaddr)
@@ -104,6 +85,8 @@ void free_page(void *kaddr)
 
   if (page != NULL)
   {
-    do_free_page(page);
+    page->vme->is_loaded = false;
+    palloc_free_page(page->kaddr);
+    free(page);
   }
 }

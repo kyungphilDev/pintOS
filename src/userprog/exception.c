@@ -149,42 +149,25 @@ page_fault(struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  // added_lab3
+  /* [ADDED_LAB3_PAGE_FAULT_HANDLER] */
   struct vm_entry *vme;
   bool flag_load = false;
   if (not_present)
   {
-    vme = find_vme(fault_addr);
-
+    vme = search_vm_entry(fault_addr);
     if (vme != NULL)
     {
-      //printf("%p has vm_entry\n", fault_addr);
-      flag_load = handle_mm_fault(vme);
+      flag_load = page_fault_handler(vme);
     }
     else
     {
-      // flag_load = expand_stack(f->esp, fault_addr);
+      // flag_load = expand_stack(f->esp, fault_addr);  ERROR PART
       flag_load = false;
     }
   }
-
-  //printf("ip : %p\tnot_present : %d\twrite : %d\tuser : %d\tfault_addr : %p\tflag_load : %d\n", f->eip, not_present, write, user, fault_addr, flag_load);
   if (!flag_load)
   {
-    //printf("%p ----------------\n", fault_addr);
-
-    //printf("[%s]\tip : %p\tnot_present : %d\twrite : %d\tuser : %d\tfault_addr : %p\tflag_load : %d\n", thread_current()->name, f->eip, not_present, write, user, fault_addr, flag_load);
     sys_exit(-1);
   }
-  /* -- */
-  // /* To implement virtual memory, delete the rest of the function
-  //    body, and replace it with code that brings in the page to
-  //    which fault_addr refers. */
-  // printf("Page fault at %p: %s error %s page in %s context.\n",
-  //        fault_addr,
-  //        not_present ? "not present" : "rights violation",
-  //        write ? "writing" : "reading",
-  //        user ? "user" : "kernel");
-  // sys_exit(-1); // [ADDED_project2_testing_page_fault_exception]
-  // kill(f);
+  /* ----------------------------- */
 }
